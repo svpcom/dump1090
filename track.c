@@ -770,8 +770,7 @@ static void trackRemoveStaleAircraft(uint64_t now)
                 prev->next = a->next; free(a); a = prev->next;
             }
         } else {
-
-#define EXPIRE(_f) do { if (a->_f##_valid.source != SOURCE_INVALID && now >= a->_f##_valid.expires) { a->_f##_valid.source = SOURCE_INVALID; } } while (0)
+#define EXPIRE(_f) do { if (a->_f##_valid.source != SOURCE_INVALID && now >= a->_f##_valid.expires) { a->_f##_valid.source = SOURCE_INVALID; a->mavlink_messages_last = 0;} } while (0)
             EXPIRE(callsign);
             EXPIRE(altitude);
             EXPIRE(altitude_gnss);
@@ -794,10 +793,25 @@ static void trackRemoveStaleAircraft(uint64_t now)
     }
 }
 
+#ifdef ENABLE_MAVLINK
+static void trackMavlinkAnnounce()
+{
+    struct aircraft *a = Modes.aircrafts;
+
+    while(a) {
+        if (a->messages > a->mavlink_messages_last)
+        {
+            mavlink_send_aircraft(a);
+            a->mavlink_messages_last = a->messages;
+        }
+        a = a->next;
+    }
+}
 
 //
 // Entry point for periodic updates
 //
+#endif
 
 void trackPeriodicUpdate()
 {
@@ -809,5 +823,9 @@ void trackPeriodicUpdate()
         next_update = now + 1000;
         trackRemoveStaleAircraft(now);
         trackUpdateAircraftModeS();
+#ifdef ENABLE_MAVLINK
+        trackMavlinkAnnounce();
+#endif
     }
 }
+

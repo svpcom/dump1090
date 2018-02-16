@@ -79,6 +79,10 @@ static void send_sbs_heartbeat(struct net_service *service);
 
 static void writeFATSVEvent(struct modesMessage *mm, struct aircraft *a);
 
+#ifdef ENABLE_MAVLINK
+static int mavlink_open_socket(const char *target_ip, int target_port);
+#endif
+
 //
 //=========================================================================
 //
@@ -265,6 +269,9 @@ void modesInitNet(void) {
 #ifdef ENABLE_WEBSERVER
     s = serviceInit("HTTP server", NULL, NULL, "\r\n\r\n", handleHTTPRequest);
     serviceListen(s, Modes.net_bind_address, Modes.net_http_ports);
+#endif
+#ifdef ENABLE_MAVLINK
+    mavlink_open_socket(Modes.mavlink_target_ip, Modes.mavlink_target_port);
 #endif
 }
 //
@@ -2108,6 +2115,112 @@ void modesNetPeriodicWork(void) {
     }
 }
 
+#ifdef ENABLE_MAVLINK
+static int mavlink_socket = -1;
+
+static int mavlink_open_socket(const char *target_ip, int target_port)
+{
+    fprintf(stderr, "Use mavlink target %s:%d\n", target_ip, target_port);
+
+    if ((mavlink_socket = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+    {
+        perror("Unable to open mavlink socket");
+        return -1;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr(target_ip);
+    addr.sin_port = htons(target_port);
+
+    if(connect(mavlink_socket, (const struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        perror("Error connecting mavlink socket");
+        close(mavlink_socket);
+        return -1;
+    }
+
+    if (fcntl(mavlink_socket, F_SETFL, O_NONBLOCK) < 0)
+
+    {
+        perror("Error setting nonblocking");
+        close(mavlink_socket);
+        return -1;
+    }
+
+    return 0;
+}
+
+void mavlink_send_aircraft(struct aircraft *a)
+{
+    mavlink_message_t msg;
+    uint32_t ICAO_address = a->addr;
+    int32_t lat = 0, lon = 0;
+    uint8_t altitude_type = ADSB_ALTITUDE_TYPE_PRESSURE_QNH;
+    int32_t altitude = 0;
+    uint16_t heading = 0;
+    uint16_t hor_velocity = 0;
+    int16_t ver_velocity = 0;
+    uint8_t emitter_type = ADSB_EMITTER_TYPE_NO_INFO;
+    uint32_t tslc = (mstime() - a->seen) / 1000;
+    uint16_t flags = 0;
+    uint16_t squawk = 0;
+    char callsign[9];
+
+    memset(callsign, '\0', sizeof(callsign));
+
+    if (trackDataValid(&a->callsign_valid)){
+        flags |= ADSB_FLAGS_VALID_CALLSIGN;
+        strncpy(callsign, a->callsign, sizeof(callsign) - 1);
+    }
+
+    if (trackDataValid(&a->altitude_gnss_valid)) {
+        altitude_type = ADSB_ALTITUDE_TYPE_GEOMETRIC;
+        flags |= ADSB_FLAGS_VALID_ALTITUDE;
+        altitude = a->altitude_gnss * 304.8; // ft -> mm
+    }else if (trackDataValid(&a->altitude_valid)) {
+        altitude_type = ADSB_ALTITUDE_TYPE_PRESSURE_QNH;
+        flags |= ADSB_FLAGS_VALID_ALTITUDE;
+        altitude = a->altitude * 304.8; // ft -> mm
+    }
+
+    if (trackDataValid(&a->speed_valid) && trackDataValid(&a->vert_rate_valid)) {
+        flags |= ADSB_FLAGS_VALID_VELOCITY;
+        hor_velocity = a->speed * 51.44; // kts -> cm/s
+        ver_velocity = a->vert_rate * 0.508; // ft/min -> cm/s
+    }
+
+    if (trackDataValid(&a->heading_valid)) {
+        flags |= ADSB_FLAGS_VALID_HEADING;
+        heading = a->heading * 100; // deg -> centideg
+    }
+
+    if (trackDataValid(&a->position_valid)) {
+        flags |= ADSB_FLAGS_VALID_COORDS;
+        lat = (int32_t)(a->lat * 1e7); // deg * 1e7
+        lon = (int32_t)(a->lon * 1e7); // deg * 1e7
+    }
+
+    if (trackDataValid(&a->squawk_valid)) {
+        squawk = a->squawk;
+    }
+
+    mavlink_msg_adsb_vehicle_pack(1, MAV_COMP_ID_ADSB, &msg, ICAO_address, lat, lon,
+                                  altitude_type, altitude, heading,
+                                  hor_velocity, ver_velocity, callsign,
+                                  emitter_type, tslc < 255 ? (uint8_t)tslc : 255,
+                                  flags, squawk);
+
+    if (mavlink_socket >= 0)
+    {
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+        uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        send(mavlink_socket, buf, len, 0);
+    }
+}
+
+#endif
 //
 // =============================== Network IO ===========================
 //

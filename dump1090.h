@@ -78,10 +78,16 @@
     #include <sys/ioctl.h>
     #include <time.h>
     #include <limits.h>
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/udp.h>
+    #include <arpa/inet.h>
 #else
     #include "winstubs.h" //Put everything Windows specific in here
 #endif
 
+#include "mavlink/common/mavlink.h"
 #include "compat/compat.h"
 
 // Avoid a dependency on rtl-sdr except where it's really needed.
@@ -333,6 +339,10 @@ struct {                             // Internal state
 #ifdef ENABLE_WEBSERVER
     char *net_http_ports;            // List of HTTP ports
 #endif
+#ifdef ENABLE_MAVLINK
+    char *mavlink_target_ip;
+    int   mavlink_target_port;
+#endif
     char *net_bind_address;          // Bind address
     int   net_sndbuf_size;           // TCP output buffer size (64Kb * 2^n)
     int   net_verbatim;              // if true, send the original message, not the CRC-corrected one
@@ -568,7 +578,8 @@ void useModesMessage    (struct modesMessage *mm);
 //
 // Functions exported from interactive.c
 //
-void  interactiveShowData(void);
+void interactiveShowData(void);
+void mavlink_send_aircraft(struct aircraft *a);
 
 #ifdef __cplusplus
 }

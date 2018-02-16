@@ -73,6 +73,7 @@ struct aircraft {
 
     uint64_t      seen;           // Time (millis) at which the last packet was received
     long          messages;       // Number of Mode S messages received
+    long          mavlink_messages_last;  // Number of Mode S messages when sending last mavlink packet
 
     double        signalLevel[8]; // Last 8 Signal Amplitudes
     int           signalNext;     // next index of signalLevel to use
